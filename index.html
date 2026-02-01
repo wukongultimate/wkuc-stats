@@ -912,8 +912,9 @@
         <div id="admin-season-detail" class="sub-panel">
             <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid #2a2a2a;">
                 <button class="btn-xs" onclick="backToSeasonsList()">← Back</button>
-                <h3 style="margin:0; font-size:1rem; color:#fff;" id="season-detail-title">Season 1</h3>
+                <h3 style="margin:0; font-size:1rem; color:#fff; flex:1;" id="season-detail-title">Season 1</h3>
                 <button class="btn-xs" onclick="showRenameSeasonModal()" title="Rename">✏️</button>
+                <button class="btn-xs danger" onclick="confirmDeleteSeason()" title="Delete Season">🗑️</button>
             </div>
 
             <!-- Teams Section -->
@@ -1717,6 +1718,52 @@ function backToSeasonsList() {
     document.querySelector('#admin-panel .sub-tab').classList.add('active');
     
     renderAdminSeasonsGrid();
+}
+
+function confirmDeleteSeason() {
+    const seasonName = seasons[currentSeasonId]?.name || 'this season';
+    const confirmed = confirm(`Are you sure you want to delete "${seasonName}"?\n\nThis will permanently delete:\n- All teams in this season\n- All scheduled games\n- All game history & stats\n\nThis cannot be undone!`);
+    
+    if (confirmed) {
+        // Double confirm for safety
+        const doubleConfirm = confirm(`FINAL WARNING: Delete "${seasonName}" and all its data?`);
+        if (doubleConfirm) {
+            deleteSeason(currentSeasonId);
+        }
+    }
+}
+
+function deleteSeason(seasonId) {
+    // Delete from seasons list
+    delete seasons[seasonId];
+    
+    // Delete season data
+    delete allSeasonData[seasonId];
+    
+    // Delete from Firebase
+    if (db) {
+        db.ref('seasons/' + seasonId).remove();
+        db.ref('seasonData/' + seasonId).remove();
+    }
+    
+    // If we deleted the current season, switch to another or create new
+    const remainingSeasons = Object.keys(seasons);
+    if (remainingSeasons.length > 0) {
+        currentSeasonId = remainingSeasons[0];
+        loadSeasonData(currentSeasonId);
+    } else {
+        // No seasons left, create a default one
+        currentSeasonId = 'season_' + Date.now();
+        seasons[currentSeasonId] = { name: 'Season 1', createdAt: new Date().toISOString() };
+        allSeasonData[currentSeasonId] = { teams: {}, schedule: [], history: [], stats: {} };
+    }
+    
+    saveSeasons();
+    
+    // Go back to seasons list
+    backToSeasonsList();
+    
+    alert('Season deleted successfully.');
 }
 
 // Render seasons as clickable cards
