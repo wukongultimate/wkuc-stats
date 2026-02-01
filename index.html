@@ -285,8 +285,14 @@
         
         /* Clean Roster Grid */
         .roster-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+            display: grid; grid-template-columns: repeat(2, 1fr);
             gap: 12px;
+        }
+        @media (min-width: 600px) {
+            .roster-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (min-width: 900px) {
+            .roster-grid { grid-template-columns: repeat(4, 1fr); }
         }
         .roster-team {
             background: #111; border: 1px solid #222; border-radius: 10px;
@@ -499,6 +505,8 @@
         .admin-player-chip .x { cursor: pointer; color: #666; }
         .admin-player-chip .x:hover { color: #dc3545; }
         .admin-player-chip.captain { background: #1a2e1a; border: 1px solid #2d4a2d; color: #4ade80; }
+        .admin-player-chip.dragging { opacity: 0.4; }
+        .admin-player-chip.drag-over { border-color: #4ade80; background: #1a2e1a; }
         
         /* Captain badge */
         .captain-badge {
@@ -722,26 +730,26 @@
             <!-- Upcoming Games to Start -->
             <h3 class="section-title">Start a Game</h3>
             <div id="upcoming-games-list"></div>
-            
-            <div id="game-setup" class="game-setup hidden">
-                <div id="selected-game-info" class="card" style="margin-bottom:20px; text-align:left;"></div>
-                <h3 class="section-title">Select Teams</h3>
-                <div class="vs-display">
-                    <div class="vs-team"><select id="team-a-select"><option value="">Team A</option></select></div>
-                    <div class="vs-text">vs</div>
-                    <div class="vs-team"><select id="team-b-select"><option value="">Team B</option></select></div>
+        </div>
+
+        <div id="game-setup" class="game-setup hidden">
+            <div id="selected-game-info" class="card" style="margin-bottom:20px; text-align:left;"></div>
+            <h3 class="section-title">Select Teams</h3>
+            <div class="vs-display">
+                <div class="vs-team"><select id="team-a-select"><option value="">Team A</option></select></div>
+                <div class="vs-text">vs</div>
+                <div class="vs-team"><select id="team-b-select"><option value="">Team B</option></select></div>
+            </div>
+            <div class="first-possession">
+                <label>First Possession</label>
+                <div class="possession-btns">
+                    <button class="possession-btn" id="poss-a" onclick="selectFirstPossession('a')">--</button>
+                    <button class="possession-btn" id="poss-b" onclick="selectFirstPossession('b')">--</button>
                 </div>
-                <div class="first-possession">
-                    <label>First Possession</label>
-                    <div class="possession-btns">
-                        <button class="possession-btn" id="poss-a" onclick="selectFirstPossession('a')">--</button>
-                        <button class="possession-btn" id="poss-b" onclick="selectFirstPossession('b')">--</button>
-                    </div>
-                </div>
-                <div style="display:flex; gap:10px;">
-                    <button class="btn secondary" onclick="cancelGameSetup()">Cancel</button>
-                    <button class="btn" onclick="startGame()" id="start-game-btn" style="flex:1;" disabled>Start Game</button>
-                </div>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <button class="btn secondary" onclick="cancelGameSetup()">Cancel</button>
+                <button class="btn" onclick="startGame()" id="start-game-btn" style="flex:1;" disabled>Start Game</button>
             </div>
         </div>
 
@@ -792,6 +800,7 @@
 
             <div class="actions-row">
                 <button class="btn secondary" onclick="undoLast()">↩ Undo</button>
+                <button class="btn secondary" onclick="showExitGameModal()" style="background:transparent; border:1px solid #555; color:#aaa;">✕ Exit</button>
                 <button class="btn danger" onclick="confirmEndGame()">End Game</button>
             </div>
 
@@ -1024,6 +1033,19 @@
             <div class="modal-buttons">
                 <button class="btn secondary" onclick="closeModal()">Cancel</button>
                 <button class="btn danger" onclick="confirmAction()">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Exit Game Modal -->
+    <div class="modal" id="exit-game-modal">
+        <div class="modal-content" style="width:360px;">
+            <p style="color:#fff; font-weight:600; font-size:1.1rem; margin-bottom:8px;">Leave Game?</p>
+            <p style="color:#999; font-size:0.85rem; margin-bottom:24px;" id="exit-game-score-summary"></p>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <button class="btn" onclick="exitGameSave()" style="width:100%;">💾 Save & Exit</button>
+                <button class="btn danger" onclick="exitGameDiscard()" style="width:100%;">🗑 Discard & Exit</button>
+                <button class="btn secondary" onclick="closeExitGameModal()" style="width:100%;">← Back to Game</button>
             </div>
         </div>
     </div>
@@ -3261,9 +3283,9 @@ function renderTeams() {
             <input type="checkbox" class="admin-row-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelectItem('teams', '${escJs(name)}')">
             <div class="admin-row-info" style="min-width:200px;">
                 <div class="admin-row-title">${escHtml(name)}${captain ? ' <span style="font-size:0.7rem;color:#666;">(C: ' + escHtml(captain) + ')</span>' : ''}</div>
-                <div class="admin-players">
+                <div class="admin-players" id="admin-players-${safeId}">
                     ${playerCount === 0 ? '<span style="color:#555; font-size:0.7rem;">No players on roster</span>' : 
-                        teams[name].map(p => `<span class="admin-player-chip ${p === captain ? 'captain' : ''}" onclick="toggleCaptain('${escJs(name)}','${escJs(p)}')" title="Click to toggle captain">${escHtml(p)}${p === captain ? '<span class="captain-badge">C</span>' : ''}<span class="x" onclick="event.stopPropagation();removePlayerFromTeam('${escJs(name)}','${escJs(p)}')">&times;</span></span>`).join('')}
+                        teams[name].map((p, idx) => `<span class="admin-player-chip ${p === captain ? 'captain' : ''}" draggable="true" data-team="${escHtml(name)}" data-player="${escHtml(p)}" data-idx="${idx}" onclick="toggleCaptain('${escJs(name)}','${escJs(p)}')" title="Drag to reorder • Click to toggle captain">${escHtml(p)}${p === captain ? '<span class="captain-badge">C</span>' : ''}<span class="x" onclick="event.stopPropagation();removePlayerFromTeam('${escJs(name)}','${escJs(p)}')">&times;</span></span>`).join('')}
                 </div>
             </div>
             <div class="admin-row-actions" style="flex-wrap:wrap; gap:4px;">
@@ -3275,7 +3297,9 @@ function renderTeams() {
                            style="width:140px; padding:4px 8px; font-size:0.75rem; background:#111; border:1px solid #333; border-radius:3px; color:#e8e8e8;"
                            onfocus="showPlayerSuggestions('${escJs(name)}', this)"
                            oninput="filterPlayerSuggestions('${escJs(name)}', this.value)"
-                           onkeydown="handlePlayerSearchKey(event, '${escJs(name)}')">
+                           onkeydown="handlePlayerSearchKey(event, '${escJs(name)}')"
+                           onpaste="handlePlayerPaste(event, '${escJs(name)}')"
+                           title="Paste multiple names from Excel to bulk add">>
                     <div id="player-suggestions-${safeId}" class="player-suggestions" style="display:none;"></div>
                 </div>
                 <button class="btn-xs" onclick="showRenameTeamModal('${escJs(name)}')" title="Rename team">✏️</button>
@@ -3359,6 +3383,39 @@ function handlePlayerSearchKey(event, teamName) {
     }
 }
 
+// Handle paste event for bulk adding players (e.g., from Excel column)
+function handlePlayerPaste(event, teamName) {
+    const clipboardData = event.clipboardData || window.clipboardData;
+    const pastedText = clipboardData.getData('text');
+    
+    // Check if it's multi-line (bulk paste from Excel)
+    const lines = pastedText.split(/[\n\r]+/).map(n => n.replace(/\t/g, ' ').trim()).filter(n => n);
+    if (lines.length > 1) {
+        event.preventDefault();
+        
+        let added = 0, skipped = 0;
+        lines.forEach(name => {
+            if (name && !teams[teamName].includes(name)) {
+                teams[teamName].push(name);
+                added++;
+            } else if (teams[teamName].includes(name)) {
+                skipped++;
+            }
+        });
+        
+        if (added > 0) {
+            saveTeams();
+            renderTeams();
+            renderRosters();
+            renderAdminPlayers();
+        }
+        
+        let msg = `Added ${added} player(s) to ${teamName}`;
+        if (skipped > 0) msg += `, ${skipped} already on team`;
+        alert(msg);
+    }
+}
+
 // Close suggestions when clicking outside
 document.addEventListener('click', function(e) {
     if (!e.target.closest('.player-suggestions') && !e.target.matches('[id^="player-search-"]')) {
@@ -3369,6 +3426,32 @@ document.addEventListener('click', function(e) {
 function addPlayerToTeamByName(teamName, playerName) {
     if (!playerName || !teamName) return;
     if (!teams[teamName]) return;
+    
+    // Check for bulk paste (multi-line input from Excel column copy)
+    const names = playerName.split(/[\n\r]+/).map(n => n.trim()).filter(n => n);
+    
+    if (names.length > 1) {
+        // Bulk add
+        let added = 0, skipped = 0;
+        names.forEach(name => {
+            if (!teams[teamName].includes(name)) {
+                teams[teamName].push(name);
+                added++;
+            } else {
+                skipped++;
+            }
+        });
+        saveTeams();
+        renderTeams();
+        renderRosters();
+        renderAdminPlayers();
+        if (skipped > 0) {
+            alert(`Added ${added} player(s), ${skipped} already on team.`);
+        }
+        return;
+    }
+    
+    // Single add
     if (teams[teamName].includes(playerName)) {
         alert('Player already on this team');
         return;
@@ -3468,6 +3551,58 @@ function toggleCaptain(teamName, playerName) {
     renderTeams();
     renderRosters();
 }
+
+// Drag-and-drop reorder for roster players
+let dragState = { team: null, fromIdx: null };
+
+document.addEventListener('dragstart', function(e) {
+    const chip = e.target.closest('.admin-player-chip[draggable]');
+    if (!chip) return;
+    dragState.team = chip.dataset.team;
+    dragState.fromIdx = parseInt(chip.dataset.idx);
+    chip.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', chip.dataset.player);
+});
+
+document.addEventListener('dragover', function(e) {
+    const chip = e.target.closest('.admin-player-chip[draggable]');
+    if (!chip || chip.dataset.team !== dragState.team) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    chip.classList.add('drag-over');
+});
+
+document.addEventListener('dragleave', function(e) {
+    const chip = e.target.closest('.admin-player-chip[draggable]');
+    if (chip) chip.classList.remove('drag-over');
+});
+
+document.addEventListener('drop', function(e) {
+    e.preventDefault();
+    const chip = e.target.closest('.admin-player-chip[draggable]');
+    if (!chip || chip.dataset.team !== dragState.team) return;
+    chip.classList.remove('drag-over');
+    
+    const toIdx = parseInt(chip.dataset.idx);
+    const teamName = dragState.team;
+    const fromIdx = dragState.fromIdx;
+    
+    if (fromIdx === toIdx || !teams[teamName]) return;
+    
+    // Reorder
+    const player = teams[teamName].splice(fromIdx, 1)[0];
+    teams[teamName].splice(toIdx, 0, player);
+    saveTeams();
+    renderTeams();
+    renderRosters();
+});
+
+document.addEventListener('dragend', function(e) {
+    document.querySelectorAll('.admin-player-chip.dragging').forEach(el => el.classList.remove('dragging'));
+    document.querySelectorAll('.admin-player-chip.drag-over').forEach(el => el.classList.remove('drag-over'));
+    dragState = { team: null, fromIdx: null };
+});
 
 // ============================================
 // GLOBAL PLAYER BASE MANAGEMENT
@@ -3600,9 +3735,17 @@ function savePlayer() {
     }
     
     if (editId) {
-        // Update existing player (preserve existing gender if not changed)
+        // Update existing player
         const existing = playerBase[editId] || {};
-        playerBase[editId] = { name: fullName, email, phone, gender: gender || existing.gender };
+        const oldName = existing.name;
+        const newName = fullName;
+        
+        playerBase[editId] = { name: newName, email, phone, gender: gender || existing.gender };
+        
+        // If name changed, propagate throughout the entire app
+        if (oldName && oldName !== newName) {
+            propagatePlayerNameChange(oldName, newName);
+        }
     } else {
         // Check for duplicate
         const dup = findDuplicatePlayer(fullName, email, phone);
@@ -3618,9 +3761,138 @@ function savePlayer() {
     
     savePlayerBase();
     renderAdminPlayers();
-    renderTeams(); // Refresh team dropdowns
+    renderTeams();
+    renderRosters();
+    renderSeasonStats();
+    renderPerGameStats();
     renderLeaderboard();
+    renderFullSchedule();
     closePlayerModal();
+}
+
+// Propagate a player name change across all data
+function propagatePlayerNameChange(oldName, newName) {
+    // 1. Update team rosters (current season)
+    for (const teamName in teams) {
+        teams[teamName] = teams[teamName].map(p => p === oldName ? newName : p);
+    }
+    
+    // 2. Update team captains
+    for (const teamName in teamCaptains) {
+        if (teamCaptains[teamName] === oldName) {
+            teamCaptains[teamName] = newName;
+        }
+    }
+    
+    // 3. Update season stats keys
+    const oldKeys = Object.keys(seasonStats).filter(k => {
+        const parts = k.split('|');
+        return parts[0] === oldName;
+    });
+    oldKeys.forEach(oldKey => {
+        const parts = oldKey.split('|');
+        const newKey = newName + '|' + parts[1];
+        seasonStats[newKey] = seasonStats[oldKey];
+        seasonStats[newKey].player = newName;
+        delete seasonStats[oldKey];
+    });
+    
+    // 4. Update game history
+    gameHistory.forEach(game => {
+        // Update stats keys
+        const statsKeys = Object.keys(game.stats);
+        statsKeys.forEach(key => {
+            const parts = key.split('|');
+            if (parts[0] === oldName) {
+                const newKey = newName + '|' + parts[1];
+                game.stats[newKey] = game.stats[key];
+                game.stats[newKey].player = newName;
+                delete game.stats[key];
+            }
+        });
+        // Update events
+        if (game.events) {
+            game.events.forEach(evt => {
+                if (evt.player === oldName) evt.player = newName;
+                if (evt.chain) {
+                    evt.chain = evt.chain.map(p => p === oldName ? newName : p);
+                }
+            });
+        }
+    });
+    
+    // 5. Update season events
+    seasonEvents.forEach(evt => {
+        if (evt.player === oldName) evt.player = newName;
+        if (evt.chain) {
+            evt.chain = evt.chain.map(p => p === oldName ? newName : p);
+        }
+    });
+    
+    // 6. Update all season data (other seasons too)
+    for (const seasonId in allSeasonData) {
+        const data = allSeasonData[seasonId];
+        // Teams
+        if (data.teams) {
+            for (const teamName in data.teams) {
+                if (Array.isArray(data.teams[teamName])) {
+                    data.teams[teamName] = data.teams[teamName].map(p => p === oldName ? newName : p);
+                }
+            }
+        }
+        // Captains
+        if (data.captains) {
+            for (const teamName in data.captains) {
+                if (data.captains[teamName] === oldName) data.captains[teamName] = newName;
+            }
+        }
+        // Stats
+        if (data.stats) {
+            const keys = Object.keys(data.stats);
+            keys.forEach(key => {
+                const parts = key.split('|');
+                if (parts[0] === oldName) {
+                    const newKey = newName + '|' + parts[1];
+                    data.stats[newKey] = data.stats[key];
+                    data.stats[newKey].player = newName;
+                    delete data.stats[key];
+                }
+            });
+        }
+        // History
+        if (data.history) {
+            data.history.forEach(game => {
+                const statsKeys = Object.keys(game.stats || {});
+                statsKeys.forEach(key => {
+                    const parts = key.split('|');
+                    if (parts[0] === oldName) {
+                        const newKey = newName + '|' + parts[1];
+                        game.stats[newKey] = game.stats[key];
+                        game.stats[newKey].player = newName;
+                        delete game.stats[key];
+                    }
+                });
+                if (game.events) {
+                    game.events.forEach(evt => {
+                        if (evt.player === oldName) evt.player = newName;
+                        if (evt.chain) evt.chain = evt.chain.map(p => p === oldName ? newName : p);
+                    });
+                }
+            });
+        }
+        // Events
+        if (data.events) {
+            data.events.forEach(evt => {
+                if (evt.player === oldName) evt.player = newName;
+                if (evt.chain) evt.chain = evt.chain.map(p => p === oldName ? newName : p);
+            });
+        }
+    }
+    
+    // Save everything
+    saveTeams();
+    saveSeasonData();
+    saveSeasons();
 }
 
 function deletePlayerBase(playerId) {
@@ -4053,6 +4325,40 @@ function undoLast() {
 
 function confirmEndGame() { showModal('End game and save stats?', endGame); }
 
+// Exit game functions - leave mid-game with save/discard option
+function showExitGameModal() {
+    if (!currentGame) return;
+    const scoreA = currentGame.teamA.score;
+    const scoreB = currentGame.teamB.score;
+    const events = currentGame.events.length;
+    document.getElementById('exit-game-score-summary').textContent = 
+        `${currentGame.teamA.name} ${scoreA} – ${scoreB} ${currentGame.teamB.name} (${events} event${events !== 1 ? 's' : ''} recorded)`;
+    document.getElementById('exit-game-modal').classList.add('show');
+}
+
+function closeExitGameModal() {
+    document.getElementById('exit-game-modal').classList.remove('show');
+}
+
+function exitGameSave() {
+    closeExitGameModal();
+    endGame();
+    closeGameEnd();
+}
+
+function exitGameDiscard() {
+    closeExitGameModal();
+    // If a scheduled game was in progress, un-mark it
+    if (currentScheduleId) {
+        const scheduledGame = schedule.find(g => g.id === currentScheduleId);
+        if (scheduledGame && scheduledGame.status === 'completed') {
+            delete scheduledGame.status;
+            delete scheduledGame.result;
+        }
+    }
+    resetGameUI();
+}
+
 function endGame() {
     const winner = currentGame.teamA.score > currentGame.teamB.score ? currentGame.teamA :
                    currentGame.teamB.score > currentGame.teamA.score ? currentGame.teamB : null;
@@ -4320,9 +4626,15 @@ function renderSeasonSelects() {
 function switchSeason(seasonId) {
     if (!seasonId || seasonId === currentSeasonId) return;
     
-    // Save current season data first
+    // Save current season data first (including teams)
     if (currentSeasonId) {
+        const teamsToSave = {};
+        for (const teamName in teams) {
+            teamsToSave[teamName] = teams[teamName].length > 0 ? teams[teamName] : ['__empty__'];
+        }
         allSeasonData[currentSeasonId] = {
+            teams: teamsToSave,
+            captains: teamCaptains,
             stats: seasonStats,
             events: seasonEvents,
             standings: teamStandings,
@@ -4373,6 +4685,7 @@ function createNewSeason() {
 
 // Rename Season
 function showRenameSeasonModal() {
+    renameSeasonTargetId = currentSeasonId;
     const currentName = seasons[currentSeasonId]?.name || '';
     document.getElementById('rename-season-name').value = currentName;
     document.getElementById('rename-season-modal').classList.add('show');
@@ -4391,9 +4704,24 @@ function renameSeason() {
         return;
     }
     
-    seasons[currentSeasonId].name = name;
+    const targetId = renameSeasonTargetId || currentSeasonId;
+    seasons[targetId].name = name;
     saveSeasons();
+    
+    // Immediately update all UI that shows the season name
     renderSeasonSelects();
+    
+    // Update the season detail title if we're in detail view and it's the active season
+    const detailTitle = document.getElementById('season-detail-title');
+    if (detailTitle && targetId === currentSeasonId) detailTitle.textContent = name;
+    
+    // Update the admin seasons grid
+    renderAdminSeasonsGrid();
+    
+    // Re-render admin seasons list (if visible)
+    renderAdminSeasons();
+    
+    renameSeasonTargetId = null;
     closeRenameSeasonModal();
 }
 
@@ -4613,12 +4941,15 @@ function renderAdminSeasons() {
     }).join('');
 }
 
+let renameSeasonTargetId = null;
+
 function showRenameSeasonModalFor(seasonId) {
-    // Temporarily switch context for rename
-    const origSeason = currentSeasonId;
-    currentSeasonId = seasonId;
-    showRenameSeasonModal();
-    // Will be handled by renameSeason which uses currentSeasonId
+    renameSeasonTargetId = seasonId;
+    const currentName = seasons[seasonId]?.name || '';
+    document.getElementById('rename-season-name').value = currentName;
+    document.getElementById('rename-season-modal').classList.add('show');
+    document.getElementById('rename-season-name').focus();
+    document.getElementById('rename-season-name').select();
 }
 
 function deleteSeason(seasonId) {
@@ -4758,6 +5089,9 @@ function startScheduledGame(scheduleId) {
     
     currentScheduleId = scheduleId;
     
+    // Ensure team selects are populated first
+    renderTeamSelects();
+    
     // Show game setup with pre-selected teams
     document.getElementById('game-not-started').classList.add('hidden');
     document.getElementById('game-setup').classList.remove('hidden');
@@ -4774,10 +5108,40 @@ function startScheduledGame(scheduleId) {
     `;
     infoDiv.classList.remove('hidden');
     
-    // Pre-select teams
-    document.getElementById('team-a-select').value = game.teamA;
-    document.getElementById('team-b-select').value = game.teamB;
+    // Pre-select teams - try exact match first, then case-insensitive fuzzy match
+    const teamASelect = document.getElementById('team-a-select');
+    const teamBSelect = document.getElementById('team-b-select');
+    
+    teamASelect.value = findMatchingTeamName(game.teamA) || '';
+    teamBSelect.value = findMatchingTeamName(game.teamB) || '';
+    
+    // If teams couldn't be matched, show a warning
+    if (!teamASelect.value || !teamBSelect.value) {
+        const missing = [];
+        if (!teamASelect.value) missing.push(game.teamA);
+        if (!teamBSelect.value) missing.push(game.teamB);
+        alert(`Team(s) not found in roster: ${missing.join(', ')}\n\nPlease select teams manually or create them in Admin → Teams & Rosters.`);
+    }
+    
     updateGameSetup();
+}
+
+// Find a team name in teams{} that matches (exact or case-insensitive/trimmed)
+function findMatchingTeamName(scheduleName) {
+    if (!scheduleName) return null;
+    const teamNames = Object.keys(teams);
+    // Exact match
+    if (teams[scheduleName]) return scheduleName;
+    // Case-insensitive match
+    const lower = scheduleName.toLowerCase().trim();
+    for (const name of teamNames) {
+        if (name.toLowerCase().trim() === lower) return name;
+    }
+    // Partial match (schedule name contains team name or vice versa)
+    for (const name of teamNames) {
+        if (lower.includes(name.toLowerCase().trim()) || name.toLowerCase().trim().includes(lower)) return name;
+    }
+    return null;
 }
 
 function cancelGameSetup() {
@@ -4919,7 +5283,59 @@ function importSchedule() {
         return;
     }
     
-    // Add to schedule with unique IDs
+    // Auto-match imported team names to existing teams
+    const teamNames = Object.keys(teams);
+    const teamNameMap = {}; // maps imported name -> actual team name
+    const unmatchedTeams = new Set();
+    
+    parsed.forEach(g => {
+        [g.teamA, g.teamB].forEach(importedName => {
+            if (teamNameMap[importedName] !== undefined) return; // already resolved
+            // Try exact match
+            if (teams[importedName]) {
+                teamNameMap[importedName] = importedName;
+                return;
+            }
+            // Case-insensitive match
+            const lower = importedName.toLowerCase().trim();
+            let matched = null;
+            for (const name of teamNames) {
+                if (name.toLowerCase().trim() === lower) { matched = name; break; }
+            }
+            // Partial/fuzzy match
+            if (!matched) {
+                for (const name of teamNames) {
+                    if (lower.includes(name.toLowerCase().trim()) || name.toLowerCase().trim().includes(lower)) {
+                        matched = name; break;
+                    }
+                }
+            }
+            if (matched) {
+                teamNameMap[importedName] = matched;
+            } else {
+                teamNameMap[importedName] = importedName; // keep original name
+                unmatchedTeams.add(importedName);
+            }
+        });
+    });
+    
+    // Auto-create unmatched teams
+    if (unmatchedTeams.size > 0) {
+        const createTeams = confirm(`The following teams from the schedule don't exist yet:\n\n${[...unmatchedTeams].join('\n')}\n\nCreate them automatically?`);
+        if (createTeams) {
+            unmatchedTeams.forEach(name => {
+                if (!teams[name]) {
+                    teams[name] = [];
+                }
+            });
+            saveTeams();
+            renderTeams();
+            renderTeamSelects();
+            renderRosters();
+        }
+    }
+    
+    // Add to schedule with resolved team names and unique IDs
     const startOrder = schedule.length;
     parsed.forEach((g, i) => {
         schedule.push({
@@ -4927,8 +5343,8 @@ function importSchedule() {
             week: g.week,
             date: g.date || '',
             time: g.time,
-            teamA: g.teamA,
-            teamB: g.teamB,
+            teamA: teamNameMap[g.teamA] || g.teamA,
+            teamB: teamNameMap[g.teamB] || g.teamB,
             label: g.label,
             status: 'scheduled',
             order: startOrder + i
