@@ -473,6 +473,21 @@
         }
         .admin-add-form .btn { padding: 8px 16px; font-size: 0.8rem; }
         
+        /* Player search suggestions */
+        .player-suggestions {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: #1a1a1a; border: 1px solid #333; border-radius: 4px;
+            max-height: 200px; overflow-y: auto; z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            margin-top: 2px;
+        }
+        .player-suggestion-item {
+            padding: 8px 10px; font-size: 0.75rem; color: #e8e8e8;
+            cursor: pointer; border-bottom: 1px solid #222;
+        }
+        .player-suggestion-item:last-child { border-bottom: none; }
+        .player-suggestion-item:hover { background: #2a2a2a; }
+        
         /* Player chips in admin */
         .admin-players {
             display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;
@@ -1413,10 +1428,14 @@ function initFirebase() {
     });
 
     db.ref('allSeasonData').on('value', (snap) => {
-        allSeasonData = snap.val() || {};
-        if (currentSeasonId) {
-            loadSeasonData(currentSeasonId);
-            renderAll();
+        const newData = snap.val() || {};
+        // Only update if we're not currently saving (prevent reload loops)
+        if (!window._isSaving) {
+            allSeasonData = newData;
+            if (currentSeasonId) {
+                loadSeasonData(currentSeasonId);
+                renderAll();
+            }
         }
     });
 }
@@ -1450,7 +1469,21 @@ function loadFromLocalStorage() {
 
 function loadSeasonData(seasonId) {
     const data = allSeasonData[seasonId] || { teams: {}, captains: {}, stats: {}, events: [], standings: {}, history: [], schedule: [] };
-    teams = data.teams || {};
+    
+    // Handle teams - convert __empty__ placeholder back to empty array
+    teams = {};
+    const loadedTeams = data.teams || {};
+    for (const teamName in loadedTeams) {
+        const roster = loadedTeams[teamName];
+        if (Array.isArray(roster) && roster.length === 1 && roster[0] === '__empty__') {
+            teams[teamName] = [];
+        } else if (Array.isArray(roster)) {
+            teams[teamName] = roster;
+        } else {
+            teams[teamName] = [];
+        }
+    }
+    
     teamCaptains = data.captains || {};
     seasonStats = data.stats || {};
     seasonEvents = data.events || [];
@@ -1486,8 +1519,14 @@ function saveTeams() {
 
 function saveSeasonData() {
     // Update current season in allSeasonData
+    // Ensure teams with empty rosters are preserved by using a placeholder if needed
+    const teamsToSave = {};
+    for (const teamName in teams) {
+        teamsToSave[teamName] = teams[teamName].length > 0 ? teams[teamName] : ['__empty__'];
+    }
+    
     allSeasonData[currentSeasonId] = {
-        teams: teams,
+        teams: teamsToSave,
         captains: teamCaptains,
         stats: seasonStats,
         events: seasonEvents,
@@ -1497,7 +1536,15 @@ function saveSeasonData() {
     };
     
     if (useFirebase) {
-        db.ref('allSeasonData/' + currentSeasonId).set(allSeasonData[currentSeasonId]);
+        window._isSaving = true;
+        db.ref('allSeasonData/' + currentSeasonId).set(allSeasonData[currentSeasonId])
+            .then(() => { 
+                setTimeout(() => { window._isSaving = false; }, 500); 
+            })
+            .catch((err) => { 
+                console.error('Save error:', err); 
+                window._isSaving = false; 
+            });
     } else {
         localStorage.setItem('uf_all_season_data', JSON.stringify(allSeasonData));
     }
@@ -3207,7 +3254,7 @@ function renderTeams() {
         const isSelected = selectedTeams.has(name);
         const playerCount = teams[name].length;
         const captain = teamCaptains[name] || null;
-        const availablePlayers = getPlayersNotOnTeam(name);
+        const safeId = name.replace(/[^a-zA-Z0-9]/g, '_');
         
         return `
         <div class="admin-row" style="flex-wrap:wrap;">
@@ -3220,11 +3267,17 @@ function renderTeams() {
                 </div>
             </div>
             <div class="admin-row-actions" style="flex-wrap:wrap; gap:4px;">
-                <select id="player-select-${escHtml(name.replace(/[^a-zA-Z0-9]/g, '_'))}" style="width:120px; padding:4px 6px; font-size:0.7rem; background:#111; border:1px solid #333; border-radius:3px; color:#e8e8e8;" onchange="addPlayerFromSelect('${escJs(name)}', this)">
-                    <option value="">+ Add player</option>
-                    ${availablePlayers.length > 0 ? '<optgroup label="From Player Base">' + availablePlayers.map(p => `<option value="${escHtml(p.name)}">${escHtml(p.name)}</option>`).join('') + '</optgroup>' : ''}
-                    <option value="__manual__">✏️ Type new name...</option>
-                </select>
+                <div style="position:relative;">
+                    <input type="text" 
+                           id="player-search-${safeId}" 
+                           placeholder="+ Add player..." 
+                           autocomplete="off"
+                           style="width:140px; padding:4px 8px; font-size:0.75rem; background:#111; border:1px solid #333; border-radius:3px; color:#e8e8e8;"
+                           onfocus="showPlayerSuggestions('${escJs(name)}', this)"
+                           oninput="filterPlayerSuggestions('${escJs(name)}', this.value)"
+                           onkeydown="handlePlayerSearchKey(event, '${escJs(name)}')">
+                    <div id="player-suggestions-${safeId}" class="player-suggestions" style="display:none;"></div>
+                </div>
                 <button class="btn-xs" onclick="showRenameTeamModal('${escJs(name)}')" title="Rename team">✏️</button>
                 <button class="btn-xs danger" onclick="deleteTeam('${escJs(name)}')" title="Delete team">🗑</button>
             </div>
@@ -3232,23 +3285,86 @@ function renderTeams() {
     }).join('');
 }
 
-function addPlayerFromSelect(teamName, selectEl) {
-    const value = selectEl.value;
-    if (!value) return;
+// Player search suggestions for team roster
+function showPlayerSuggestions(teamName, inputEl) {
+    const safeId = teamName.replace(/[^a-zA-Z0-9]/g, '_');
+    const container = document.getElementById('player-suggestions-' + safeId);
+    if (!container) return;
     
-    if (value === '__manual__') {
-        // Show prompt for manual entry
-        const playerName = prompt('Enter player name (guest/temporary):');
-        if (playerName && playerName.trim()) {
-            addPlayerToTeamByName(teamName, playerName.trim());
-        }
-        selectEl.value = '';
-        return;
+    filterPlayerSuggestions(teamName, inputEl.value);
+    container.style.display = 'block';
+}
+
+function filterPlayerSuggestions(teamName, query) {
+    const safeId = teamName.replace(/[^a-zA-Z0-9]/g, '_');
+    const container = document.getElementById('player-suggestions-' + safeId);
+    if (!container) return;
+    
+    const q = query.toLowerCase().trim();
+    const availablePlayers = getPlayersNotOnTeam(teamName);
+    
+    // Filter by query
+    let filtered = availablePlayers;
+    if (q) {
+        filtered = availablePlayers.filter(p => p.name.toLowerCase().includes(q));
     }
     
-    addPlayerToTeamByName(teamName, value);
-    selectEl.value = '';
+    // Limit to 8 results
+    filtered = filtered.slice(0, 8);
+    
+    if (filtered.length === 0 && q) {
+        // Show option to add as new/guest
+        container.innerHTML = `
+            <div class="player-suggestion-item" onclick="addPlayerToTeamByName('${escJs(teamName)}', '${escJs(query)}'); hidePlayerSuggestions('${escJs(teamName)}');">
+                <span style="color:#4ade80;">+ Add "${escHtml(query)}" as guest</span>
+            </div>
+        `;
+    } else if (filtered.length === 0) {
+        container.innerHTML = '<div style="padding:8px; color:#666; font-size:0.75rem;">Type to search players...</div>';
+    } else {
+        container.innerHTML = filtered.map(p => `
+            <div class="player-suggestion-item" onclick="addPlayerToTeamByName('${escJs(teamName)}', '${escJs(p.name)}'); hidePlayerSuggestions('${escJs(teamName)}');">
+                ${escHtml(p.name)}
+                ${p.gender ? `<span style="font-size:0.65rem; color:#666; margin-left:4px;">(${p.gender})</span>` : ''}
+            </div>
+        `).join('');
+    }
+    
+    container.style.display = 'block';
 }
+
+function hidePlayerSuggestions(teamName) {
+    const safeId = teamName.replace(/[^a-zA-Z0-9]/g, '_');
+    const container = document.getElementById('player-suggestions-' + safeId);
+    const input = document.getElementById('player-search-' + safeId);
+    if (container) {
+        setTimeout(() => { container.style.display = 'none'; }, 150);
+    }
+    if (input) {
+        input.value = '';
+    }
+}
+
+function handlePlayerSearchKey(event, teamName) {
+    if (event.key === 'Escape') {
+        hidePlayerSuggestions(teamName);
+        event.target.blur();
+    } else if (event.key === 'Enter') {
+        const safeId = teamName.replace(/[^a-zA-Z0-9]/g, '_');
+        const container = document.getElementById('player-suggestions-' + safeId);
+        const firstItem = container?.querySelector('.player-suggestion-item');
+        if (firstItem) {
+            firstItem.click();
+        }
+    }
+}
+
+// Close suggestions when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.player-suggestions') && !e.target.matches('[id^="player-search-"]')) {
+        document.querySelectorAll('.player-suggestions').forEach(el => el.style.display = 'none');
+    }
+});
 
 function addPlayerToTeamByName(teamName, playerName) {
     if (!playerName || !teamName) return;
@@ -4413,15 +4529,13 @@ function renderAdminSchedule() {
     
     container.innerHTML = sortedSchedule.map(game => {
         const isCompleted = game.status === 'completed';
-        const isSelected = selectedSchedule.has(game.id);
         const dateDisplay = game.date ? formatDateShort(game.date) : '';
         const timeDisplay = game.time || '';
         const score = isCompleted && game.result ? `${game.result.teamAScore}-${game.result.teamBScore}` : '';
         
         return `
         <div class="admin-row">
-            <input type="checkbox" class="admin-row-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelectItem('schedule', '${game.id}')">
-            <div class="admin-row-info">
+            <div class="admin-row-info" style="flex:1;">
                 <div class="admin-row-title">${escHtml(game.teamA)} vs ${escHtml(game.teamB)}</div>
                 <div class="admin-row-meta">${escHtml(game.week || '')} ${dateDisplay} ${timeDisplay}${game.label ? ' • ' + escHtml(game.label) : ''}</div>
             </div>
