@@ -507,6 +507,10 @@
         .admin-player-chip.captain { background: #1a2e1a; border: 1px solid #2d4a2d; color: #4ade80; }
         .admin-player-chip.dragging { opacity: 0.4; }
         .admin-player-chip.drag-over { border-color: #4ade80; background: #1a2e1a; }
+        .draggable-schedule { cursor: grab; }
+        .draggable-schedule:active { cursor: grabbing; }
+        .draggable-schedule.dragging { opacity: 0.4; }
+        .draggable-schedule.drag-over { outline: 2px solid #4ade80; outline-offset: -2px; border-radius: 6px; }
         
         /* Captain badge */
         .captain-badge {
@@ -730,6 +734,9 @@
             <!-- Upcoming Games to Start -->
             <h3 class="section-title">Start a Game</h3>
             <div id="upcoming-games-list"></div>
+            
+            <!-- Recently Completed Games (admin can reset) -->
+            <div id="completed-games-section"></div>
         </div>
 
         <div id="game-setup" class="game-setup hidden">
@@ -1983,38 +1990,73 @@ function switchLeaderboardGender(gender) {
     renderLeaderboard();
 }
 
+// Helper: extract player name from a stats key (handles both "player|team" and plain "player" formats)
+function getPlayerFromKey(key) {
+    return key.includes('|') ? key.split('|')[0] : key;
+}
+
+// Helper: check if a stats key belongs to a player (case-insensitive)
+function isKeyForPlayer(key, playerName) {
+    return getPlayerFromKey(key).toLowerCase() === playerName.toLowerCase();
+}
+
+// Helper: read stat fields with correct names (handles both old wrong names and correct names)
+function readSeasonStat(s) {
+    return {
+        goals: s.score || s.scores || 0,
+        assists: s.assist || s.assists || 0,
+        defense: s.defence || s.defenses || 0,
+        games: s.games || s.gamesPlayed || 0,
+        wins: s.wins || 0,
+        pass: s.pass || 0,
+        drop: s.drop || s.drops || 0,
+        throwaway: s.throwaway || s.turnovers || 0,
+        second_assist: s.second_assist || 0
+    };
+}
+
+// Helper: read game stat fields (from game.stats entries)
+function readGameStat(gs) {
+    return {
+        goals: gs.score || gs.scores || 0,
+        assists: gs.assist || gs.assists || 0,
+        defense: gs.defence || gs.defenses || 0,
+        drop: gs.drop || gs.drops || 0,
+        throwaway: gs.throwaway || gs.turnovers || 0,
+        second_assist: gs.second_assist || 0,
+        pass: gs.pass || 0
+    };
+}
+
 // Get player stats with gender from playerBase
 function getPlayerStatsWithGender() {
-    const stats = [];
+    const playerMap = {}; // Aggregate by player name (across teams)
     
-    for (const playerName in seasonStats) {
-        const s = seasonStats[playerName];
-        // Find gender from playerBase
-        let gender = 'Open'; // default
-        for (const id in playerBase) {
-            if (playerBase[id].name.toLowerCase() === playerName.toLowerCase()) {
-                gender = playerBase[id].gender || 'Open';
-                break;
+    for (const key in seasonStats) {
+        const s = seasonStats[key];
+        const playerName = s.player || key.split('|')[0];
+        
+        if (!playerMap[playerName]) {
+            // Find gender from playerBase
+            let gender = 'Open';
+            for (const id in playerBase) {
+                if (playerBase[id].name.toLowerCase() === playerName.toLowerCase()) {
+                    gender = playerBase[id].gender || 'Open';
+                    break;
+                }
             }
+            playerMap[playerName] = { name: playerName, gender, goals: 0, assists: 0, defense: 0, total: 0, games: 0 };
         }
         
-        const goals = s.scores || 0;
-        const assists = s.assists || 0;
-        const defense = s.defenses || 0;
-        const total = goals + assists + defense;
-        
-        stats.push({
-            name: playerName,
-            gender,
-            goals,
-            assists,
-            defense,
-            total,
-            games: s.gamesPlayed || 0
-        });
+        const p = playerMap[playerName];
+        p.goals += (s.score || 0);
+        p.assists += (s.assist || 0);
+        p.defense += (s.defence || 0);
+        p.games += (s.games || 0);
+        p.total = p.goals + p.assists + p.defense;
     }
     
-    return stats;
+    return Object.values(playerMap);
 }
 
 // ============================================
@@ -2049,50 +2091,44 @@ function showPlayerDetailByName(playerName) {
         const stats = data.stats || {};
         const history = data.history || [];
         
-        // Find player stats in this season (case-insensitive)
-        for (const name in stats) {
-            if (name.toLowerCase() === playerName.toLowerCase()) {
-                const s = stats[name];
-                const goals = s.scores || 0;
-                const assists = s.assists || 0;
-                const defense = s.defenses || 0;
-                const games = s.gamesPlayed || 0;
-                const wins = s.wins || 0;
+        // Find player stats in this season (case-insensitive, handles player|team keys)
+        for (const key in stats) {
+            if (isKeyForPlayer(key, playerName)) {
+                const rs = readSeasonStat(stats[key]);
                 
-                totalGoals += goals;
-                totalAssists += assists;
-                totalDefense += defense;
-                totalGames += games;
-                winCount += wins;
+                totalGoals += rs.goals;
+                totalAssists += rs.assists;
+                totalDefense += rs.defense;
+                totalGames += rs.games;
+                winCount += rs.wins;
                 
-                if (goals > 0 || assists > 0 || defense > 0) {
+                if (rs.goals > 0 || rs.assists > 0 || rs.defense > 0) {
                     seasonBreakdown.push({
                         seasonId,
                         seasonName: seasons[seasonId]?.name || 'Unknown Season',
-                        goals,
-                        assists,
-                        defense,
-                        total: goals + assists + defense,
-                        games
+                        goals: rs.goals,
+                        assists: rs.assists,
+                        defense: rs.defense,
+                        total: rs.goals + rs.assists + rs.defense,
+                        games: rs.games
                     });
                 }
-                break;
             }
         }
         
         // Check game history for best game and MVP counts
         history.forEach(game => {
             const gameStats = game.stats || {};
-            for (const name in gameStats) {
-                if (name.toLowerCase() === playerName.toLowerCase()) {
-                    const gs = gameStats[name];
-                    const gameTotal = (gs.scores || 0) + (gs.assists || 0) + (gs.defenses || 0);
+            for (const key in gameStats) {
+                if (isKeyForPlayer(key, playerName)) {
+                    const rg = readGameStat(gameStats[key]);
+                    const gameTotal = rg.goals + rg.assists + rg.defense;
                     if (gameTotal > bestGame.total) {
                         bestGame = {
                             total: gameTotal,
-                            goals: gs.scores || 0,
-                            assists: gs.assists || 0,
-                            defense: gs.defenses || 0
+                            goals: rg.goals,
+                            assists: rg.assists,
+                            defense: rg.defense
                         };
                     }
                 }
@@ -2100,12 +2136,12 @@ function showPlayerDetailByName(playerName) {
             
             // Check if player was MVP (top scorer in game)
             let topScorer = '', topScore = 0;
-            for (const name in gameStats) {
-                const gs = gameStats[name];
-                const total = (gs.scores || 0) + (gs.assists || 0) + (gs.defenses || 0);
+            for (const key in gameStats) {
+                const rg = readGameStat(gameStats[key]);
+                const total = rg.goals + rg.assists + rg.defense;
                 if (total > topScore) {
                     topScore = total;
-                    topScorer = name;
+                    topScorer = getPlayerFromKey(key);
                 }
             }
             if (topScorer.toLowerCase() === playerName.toLowerCase() && topScore > 0) {
@@ -2249,19 +2285,21 @@ function calculateRankPoints(playerName) {
             let playerWon = false;
             
             // Calculate game averages and player's stats
-            for (const name in gameStats) {
-                const gs = gameStats[name];
-                const positive = (gs.scores || 0) + (gs.assists || 0) + (gs.defenses || 0);
-                const negative = (gs.drops || 0) + (gs.turnovers || 0);
+            for (const key in gameStats) {
+                const rg = readGameStat(gameStats[key]);
+                const positive = rg.goals + rg.assists + rg.defense;
+                const negative = rg.drop + rg.throwaway;
                 totalPositive += positive;
                 totalNegative += negative;
                 playerCount++;
                 
-                if (name.toLowerCase() === playerName.toLowerCase()) {
+                if (isKeyForPlayer(key, playerName)) {
                     playerInGame = true;
                     playerPositive = positive;
                     playerNegative = negative;
-                    playerWon = gs.won || false;
+                    // Check if player's team won
+                    const playerTeam = gameStats[key].team || key.split('|')[1] || '';
+                    playerWon = game.winner === playerTeam;
                 }
             }
             
@@ -2691,35 +2729,34 @@ function getPlayerCumulativeStats(playerName) {
         const stats = data.stats || {};
         const history = data.history || [];
         
-        for (const name in stats) {
-            if (name.toLowerCase() === playerName.toLowerCase()) {
-                const s = stats[name];
-                totalGoals += s.scores || 0;
-                totalAssists += s.assists || 0;
-                totalDefense += s.defenses || 0;
-                totalGames += s.gamesPlayed || 0;
-                winCount += s.wins || 0;
-                break;
+        for (const key in stats) {
+            if (isKeyForPlayer(key, playerName)) {
+                const rs = readSeasonStat(stats[key]);
+                totalGoals += rs.goals;
+                totalAssists += rs.assists;
+                totalDefense += rs.defense;
+                totalGames += rs.games;
+                winCount += rs.wins;
             }
         }
         
         history.forEach(game => {
             const gameStats = game.stats || {};
             let topScorer = '', topScore = 0;
-            for (const name in gameStats) {
-                const gs = gameStats[name];
-                const goals = gs.scores || 0;
-                const assists = gs.assists || 0;
-                const defense = gs.defenses || 0;
+            for (const key in gameStats) {
+                const rg = readGameStat(gameStats[key]);
+                const goals = rg.goals;
+                const assists = rg.assists;
+                const defense = rg.defense;
                 const total = goals + assists + defense;
                 
                 if (total > topScore) {
                     topScore = total;
-                    topScorer = name;
+                    topScorer = getPlayerFromKey(key);
                 }
                 
                 // Track best game for this player
-                if (name.toLowerCase() === playerName.toLowerCase()) {
+                if (isKeyForPlayer(key, playerName)) {
                     if (total > bestGame.total) {
                         bestGame = { total, goals, assists, defense };
                     }
@@ -2775,22 +2812,21 @@ function renderPlayerProfileCard(playerName) {
     const seasonBreakdown = [];
     for (const seasonId in allSeasonData) {
         const data = allSeasonData[seasonId];
-        const seasonStats = data.stats || {};
-        for (const name in seasonStats) {
-            if (name.toLowerCase() === playerName.toLowerCase()) {
-                const s = seasonStats[name];
-                const total = (s.scores || 0) + (s.assists || 0) + (s.defenses || 0);
-                if (total > 0 || (s.gamesPlayed || 0) > 0) {
+        const sStats = data.stats || {};
+        for (const key in sStats) {
+            if (isKeyForPlayer(key, playerName)) {
+                const rs = readSeasonStat(sStats[key]);
+                const total = rs.goals + rs.assists + rs.defense;
+                if (total > 0 || rs.games > 0) {
                     seasonBreakdown.push({
                         seasonName: seasons[seasonId]?.name || 'Unknown',
-                        goals: s.scores || 0,
-                        assists: s.assists || 0,
-                        defense: s.defenses || 0,
+                        goals: rs.goals,
+                        assists: rs.assists,
+                        defense: rs.defense,
                         total,
-                        games: s.gamesPlayed || 0
+                        games: rs.games
                     });
                 }
-                break;
             }
         }
     }
@@ -3107,53 +3143,20 @@ function bulkDeleteSchedule() {
 
 function bulkDeleteHistory() {
     if (selectedHistory.size === 0) return;
-    showModal(`Delete ${selectedHistory.size} game record(s)? This will remove all stats from these games.`, () => {
-        // Remove stats for each game
+    showModal(`Delete ${selectedHistory.size} game record(s)? This will remove all stats and schedule entries.`, () => {
         selectedHistory.forEach(idx => {
             const game = gameHistory[idx];
             if (game) {
-                // Subtract stats
-                for (const key in game.stats) {
-                    const gs = game.stats[key];
-                    if (seasonStats[key]) {
-                        const ss = seasonStats[key];
-                        ss.games = Math.max(0, ss.games - 1);
-                        ss.pass = Math.max(0, (ss.pass || 0) - (gs.pass || 0));
-                        ss.score = Math.max(0, ss.score - gs.score);
-                        ss.assist = Math.max(0, ss.assist - gs.assist);
-                        ss.second_assist = Math.max(0, ss.second_assist - gs.second_assist);
-                        ss.defence = Math.max(0, ss.defence - gs.defence);
-                        ss.drop = Math.max(0, ss.drop - gs.drop);
-                        ss.throwaway = Math.max(0, ss.throwaway - gs.throwaway);
-                        if (game.winner && gs.team === game.winner) ss.wins = Math.max(0, ss.wins - 1);
-                        if (ss.games <= 0) delete seasonStats[key];
-                    }
-                }
-                // Update standings
-                const teamA = game.teamA.name, teamB = game.teamB.name;
-                const scoreA = game.teamA.score, scoreB = game.teamB.score;
-                if (teamStandings[teamA]) {
-                    teamStandings[teamA].pf = Math.max(0, teamStandings[teamA].pf - scoreA);
-                    teamStandings[teamA].pa = Math.max(0, teamStandings[teamA].pa - scoreB);
-                    if (scoreA > scoreB) teamStandings[teamA].wins = Math.max(0, teamStandings[teamA].wins - 1);
-                    else if (scoreB > scoreA) teamStandings[teamA].losses = Math.max(0, teamStandings[teamA].losses - 1);
-                }
-                if (teamStandings[teamB]) {
-                    teamStandings[teamB].pf = Math.max(0, teamStandings[teamB].pf - scoreB);
-                    teamStandings[teamB].pa = Math.max(0, teamStandings[teamB].pa - scoreA);
-                    if (scoreB > scoreA) teamStandings[teamB].wins = Math.max(0, teamStandings[teamB].wins - 1);
-                    else if (scoreA > scoreB) teamStandings[teamB].losses = Math.max(0, teamStandings[teamB].losses - 1);
+                subtractGameStats(game);
+                if (game.scheduleInfo && game.scheduleInfo.id) {
+                    schedule = schedule.filter(g => g.id !== game.scheduleInfo.id);
                 }
             }
         });
-        // Remove games (in reverse order to maintain indices)
         const indices = [...selectedHistory].sort((a, b) => b - a);
         indices.forEach(idx => gameHistory.splice(idx, 1));
         selectedHistory.clear();
-        saveSeasonData();
-        renderAdminHistory();
-        renderSeasonStats();
-        renderPerGameStats();
+        refreshAllViews();
         updateBulkBar('history');
     });
 }
@@ -3579,9 +3582,9 @@ document.addEventListener('dragleave', function(e) {
 });
 
 document.addEventListener('drop', function(e) {
-    e.preventDefault();
     const chip = e.target.closest('.admin-player-chip[draggable]');
     if (!chip || chip.dataset.team !== dragState.team) return;
+    e.preventDefault();
     chip.classList.remove('drag-over');
     
     const toIdx = parseInt(chip.dataset.idx);
@@ -3602,6 +3605,67 @@ document.addEventListener('dragend', function(e) {
     document.querySelectorAll('.admin-player-chip.dragging').forEach(el => el.classList.remove('dragging'));
     document.querySelectorAll('.admin-player-chip.drag-over').forEach(el => el.classList.remove('drag-over'));
     dragState = { team: null, fromIdx: null };
+});
+
+// Schedule drag-and-drop reordering
+let scheduleDragState = { id: null, fromIdx: null };
+
+document.addEventListener('dragstart', function(e) {
+    const row = e.target.closest('.draggable-schedule');
+    if (!row) return;
+    scheduleDragState.id = row.dataset.scheduleId;
+    scheduleDragState.fromIdx = parseInt(row.dataset.sortIdx);
+    row.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/schedule', row.dataset.scheduleId);
+});
+
+document.addEventListener('dragover', function(e) {
+    const row = e.target.closest('.draggable-schedule');
+    if (!row || !scheduleDragState.id) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    
+    // Show drop indicator based on mouse position (above or below midpoint)
+    const rect = row.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    row.classList.add('drag-over');
+});
+
+document.addEventListener('dragleave', function(e) {
+    const row = e.target.closest('.draggable-schedule');
+    if (row) row.classList.remove('drag-over');
+});
+
+document.addEventListener('drop', function(e) {
+    if (!scheduleDragState.id) return;
+    e.preventDefault();
+    const row = e.target.closest('.draggable-schedule');
+    if (!row) return;
+    row.classList.remove('drag-over');
+    
+    const toIdx = parseInt(row.dataset.sortIdx);
+    const fromIdx = scheduleDragState.fromIdx;
+    if (fromIdx === toIdx) return;
+    
+    // Sort schedule by current order, then reorder
+    const sorted = [...schedule].sort((a, b) => (a.order || 0) - (b.order || 0));
+    const movedItem = sorted.splice(fromIdx, 1)[0];
+    sorted.splice(toIdx, 0, movedItem);
+    
+    // Reassign order values
+    sorted.forEach((game, i) => { game.order = i; });
+    
+    saveSeasonData();
+    renderAdminSchedule();
+    renderUpcomingGames();
+    renderFullSchedule();
+});
+
+document.addEventListener('dragend', function(e) {
+    document.querySelectorAll('.draggable-schedule.dragging').forEach(el => el.classList.remove('dragging'));
+    document.querySelectorAll('.draggable-schedule.drag-over').forEach(el => el.classList.remove('drag-over'));
+    scheduleDragState = { id: null, fromIdx: null };
 });
 
 // ============================================
@@ -4430,6 +4494,13 @@ function endGame() {
     document.getElementById('game-end-downloads').classList.remove('hidden');
     // Hide game controls
     document.querySelectorAll('.action-buttons, .team-section, .chain-display').forEach(el => el.classList.add('hidden'));
+    // Update all stats views
+    renderLeaderboard();
+    renderSeasonStats();
+    renderPerGameStats();
+    renderAdminHistory();
+    renderAdminSchedule();
+    renderFullSchedule();
 }
 
 let lastGameData = null;
@@ -4805,7 +4876,7 @@ function renderRosters() {
     </div>`;
 }
 
-// Upcoming games for Game tab (admin - to start games)
+// Upcoming games for Game tab (admin - to start games, draggable to reorder)
 function renderUpcomingGames() {
     const container = document.getElementById('upcoming-games-list');
     if (!container) return;
@@ -4814,19 +4885,21 @@ function renderUpcomingGames() {
     
     if (upcomingGames.length === 0) {
         container.innerHTML = '<div class="empty-state">No upcoming games.<br>Add games in Admin → Schedule</div>';
+        renderCompletedGamesSection();
         return;
     }
     
     const sortedGames = [...upcomingGames].sort((a, b) => (a.order || 0) - (b.order || 0));
     
-    container.innerHTML = sortedGames.map(game => {
+    container.innerHTML = sortedGames.map((game, sortIdx) => {
         const dateDisplay = game.date ? formatDate(game.date) : '';
         const timeDisplay = game.time || '';
         
         return `
-        <div class="schedule-card scheduled">
+        <div class="schedule-card scheduled draggable-schedule" draggable="true" data-schedule-id="${game.id}" data-sort-idx="${sortIdx}">
             <div class="schedule-header">
-                <div class="schedule-meta">
+                <div style="cursor:grab; padding:0 8px 0 0; color:#555; font-size:1.1rem;" class="drag-handle">⠿</div>
+                <div class="schedule-meta" style="flex:1;">
                     <span class="schedule-week">${escHtml(game.week || '')}</span>
                     <div class="schedule-datetime">${dateDisplay} ${timeDisplay}${game.label ? ' • ' + escHtml(game.label) : ''}</div>
                 </div>
@@ -4841,9 +4914,53 @@ function renderUpcomingGames() {
             </div>
         </div>`;
     }).join('');
+    
+    // Render completed games section
+    renderCompletedGamesSection();
 }
 
-// Admin schedule view (with edit/delete)
+function renderCompletedGamesSection() {
+    const section = document.getElementById('completed-games-section');
+    if (!section) return;
+    
+    const completedGames = schedule.filter(g => g.status === 'completed');
+    if (completedGames.length === 0) {
+        section.innerHTML = '';
+        return;
+    }
+    
+    const sorted = [...completedGames].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    section.innerHTML = `
+        <h3 class="section-title" style="margin-top:24px; color:#888;">Completed Games</h3>
+        ${sorted.map(game => {
+            const dateDisplay = game.date ? formatDate(game.date) : '';
+            const timeDisplay = game.time || '';
+            const score = game.result ? `${game.result.teamAScore} - ${game.result.teamBScore}` : '';
+            const winner = game.result?.winner;
+            
+            return `
+            <div class="schedule-card" style="opacity:0.7; border-color:#333;">
+                <div class="schedule-header">
+                    <div class="schedule-meta" style="flex:1;">
+                        <span class="schedule-week">${escHtml(game.week || '')}</span>
+                        <div class="schedule-datetime">${dateDisplay} ${timeDisplay}${game.label ? ' • ' + escHtml(game.label) : ''}</div>
+                    </div>
+                </div>
+                <div class="schedule-matchup">
+                    <span>${escHtml(game.teamA)}</span>
+                    <span class="schedule-vs" style="color:#4ade80; font-weight:700;">${score}</span>
+                    <span>${escHtml(game.teamB)}</span>
+                </div>
+                <div class="schedule-actions" style="gap:8px;">
+                    <button class="btn secondary" style="font-size:0.8rem; padding:8px 14px;" onclick="resetGameByScheduleId('${game.id}')">↻ Reset & Replay</button>
+                </div>
+            </div>`;
+        }).join('')}
+    `;
+}
+
+// Admin schedule view (with edit/delete, draggable to reorder)
 function renderAdminSchedule() {
     const container = document.getElementById('admin-schedule-list');
     if (!container) return;
@@ -4855,20 +4972,22 @@ function renderAdminSchedule() {
     
     const sortedSchedule = [...schedule].sort((a, b) => (a.order || 0) - (b.order || 0));
     
-    container.innerHTML = sortedSchedule.map(game => {
+    container.innerHTML = sortedSchedule.map((game, sortIdx) => {
         const isCompleted = game.status === 'completed';
         const dateDisplay = game.date ? formatDateShort(game.date) : '';
         const timeDisplay = game.time || '';
         const score = isCompleted && game.result ? `${game.result.teamAScore}-${game.result.teamBScore}` : '';
         
         return `
-        <div class="admin-row">
+        <div class="admin-row draggable-schedule" draggable="true" data-schedule-id="${game.id}" data-sort-idx="${sortIdx}">
+            <div style="cursor:grab; padding:0 6px; color:#555; font-size:1rem;" class="drag-handle">⠿</div>
             <div class="admin-row-info" style="flex:1;">
                 <div class="admin-row-title">${escHtml(game.teamA)} vs ${escHtml(game.teamB)}</div>
                 <div class="admin-row-meta">${escHtml(game.week || '')} ${dateDisplay} ${timeDisplay}${game.label ? ' • ' + escHtml(game.label) : ''}</div>
             </div>
             <span class="admin-row-status ${isCompleted ? 'completed' : 'upcoming'}">${isCompleted ? score : 'TBD'}</span>
             <div class="admin-row-actions">
+                ${isCompleted ? `<button class="btn-xs" onclick="resetGameByScheduleId('${game.id}')" title="Reset — clear stats, replay game">↻</button>` : ''}
                 <button class="btn-xs danger" onclick="deleteScheduledGame('${game.id}')">🗑</button>
             </div>
         </div>`;
@@ -4889,21 +5008,20 @@ function renderAdminHistory() {
     
     container.innerHTML = gameHistory.slice().reverse().map((game, idx) => {
         const gameIdx = gameHistory.length - 1 - idx;
-        const isSelected = selectedHistory.has(gameIdx);
         const si = game.scheduleInfo;
         const dateDisplay = si?.date ? formatDateShort(si.date) : formatDateShort(game.date);
         const score = `${game.teamA.score}-${game.teamB.score}`;
         
         return `
         <div class="admin-row">
-            <input type="checkbox" class="admin-row-checkbox" ${isSelected ? 'checked' : ''} onchange="toggleSelectItem('history', ${gameIdx})">
             <div class="admin-row-info">
                 <div class="admin-row-title">${escHtml(game.teamA.name)} vs ${escHtml(game.teamB.name)}</div>
                 <div class="admin-row-meta">${escHtml(si?.week || '')} ${dateDisplay}${game.winner ? ' • Winner: ' + escHtml(game.winner) : ''}</div>
             </div>
             <span class="admin-row-status completed">${score}</span>
             <div class="admin-row-actions">
-                <button class="btn-xs danger" onclick="deleteGameHistory(${gameIdx})">🗑</button>
+                <button class="btn-xs" onclick="resetGameHistory(${gameIdx})" title="Reset — clear stats, replay game">↻</button>
+                <button class="btn-xs danger" onclick="deleteGameHistory(${gameIdx})" title="Delete — remove everything">🗑</button>
             </div>
         </div>`;
     }).join('');
@@ -5043,8 +5161,9 @@ function renderPerGameStats() {
                         </tbody>
                     </table>
                 </div>
-                ${!isPlayerView ? `<div style="margin-top:12px; text-align:right;">
-                    <button class="btn-delete" onclick="event.stopPropagation(); deleteGameHistory(${gameIdx})">🗑 Delete Game</button>
+                ${!isPlayerView ? `<div style="margin-top:12px; display:flex; justify-content:flex-end; gap:8px;">
+                    <button class="btn-delete" style="background:#1a1a2e; border-color:#2a2a4a; color:#8b8bdb;" onclick="event.stopPropagation(); resetGameHistory(${gameIdx})">↻ Reset</button>
+                    <button class="btn-delete" onclick="event.stopPropagation(); deleteGameHistory(${gameIdx})">🗑 Delete</button>
                 </div>` : ''}
             </div>
         </div>`;
@@ -5517,9 +5636,31 @@ function undoDelete() {
             if (scoreA > scoreB) { teamStandings[teamA].wins++; teamStandings[teamB].losses++; }
             else if (scoreB > scoreA) { teamStandings[teamB].wins++; teamStandings[teamA].losses++; }
             
+            // Restore season events
+            if (undoData.game.events && undoData.game.events.length > 0) {
+                seasonEvents = seasonEvents.concat(undoData.game.events);
+            }
+            
+            // Restore schedule entry depending on action type
+            if (undoData.action === 'delete' && undoData.scheduleEntry) {
+                // Full delete — re-add schedule entry
+                schedule.push(undoData.scheduleEntry);
+            }
+            if (undoData.action === 'reset' && undoData.game.scheduleInfo && undoData.game.scheduleInfo.id) {
+                // Reset — re-mark schedule as completed
+                const sg = schedule.find(g => g.id === undoData.game.scheduleInfo.id);
+                if (sg) {
+                    sg.status = 'completed';
+                    sg.result = {
+                        teamAScore: undoData.game.teamA.score,
+                        teamBScore: undoData.game.teamB.score,
+                        winner: undoData.game.winner || null
+                    };
+                }
+            }
+            
             saveSeasonData();
-            renderSeasonStats();
-            renderPerGameStats();
+            refreshAllViews();
             break;
     }
     
@@ -5527,62 +5668,128 @@ function undoDelete() {
 }
 
 // Delete game from history
+// Helper: subtract a game's stats from season totals and standings
+function subtractGameStats(game) {
+    for (const key in game.stats) {
+        const gs = game.stats[key];
+        if (seasonStats[key]) {
+            const ss = seasonStats[key];
+            ss.games--;
+            ss.pass = Math.max(0, (ss.pass || 0) - (gs.pass || 0));
+            ss.score = Math.max(0, ss.score - gs.score);
+            ss.assist = Math.max(0, ss.assist - gs.assist);
+            ss.second_assist = Math.max(0, ss.second_assist - gs.second_assist);
+            ss.defence = Math.max(0, ss.defence - gs.defence);
+            ss.drop = Math.max(0, ss.drop - gs.drop);
+            ss.throwaway = Math.max(0, ss.throwaway - gs.throwaway);
+            if (game.winner && gs.team === game.winner) ss.wins = Math.max(0, ss.wins - 1);
+            if (ss.games <= 0) delete seasonStats[key];
+        }
+    }
+    // Subtract standings
+    const teamA = game.teamA.name;
+    const teamB = game.teamB.name;
+    const scoreA = game.teamA.score;
+    const scoreB = game.teamB.score;
+    if (teamStandings[teamA]) {
+        teamStandings[teamA].pf = Math.max(0, teamStandings[teamA].pf - scoreA);
+        teamStandings[teamA].pa = Math.max(0, teamStandings[teamA].pa - scoreB);
+        if (scoreA > scoreB) teamStandings[teamA].wins = Math.max(0, teamStandings[teamA].wins - 1);
+        else if (scoreB > scoreA) teamStandings[teamA].losses = Math.max(0, teamStandings[teamA].losses - 1);
+    }
+    if (teamStandings[teamB]) {
+        teamStandings[teamB].pf = Math.max(0, teamStandings[teamB].pf - scoreB);
+        teamStandings[teamB].pa = Math.max(0, teamStandings[teamB].pa - scoreA);
+        if (scoreB > scoreA) teamStandings[teamB].wins = Math.max(0, teamStandings[teamB].wins - 1);
+        else if (scoreA > scoreB) teamStandings[teamB].losses = Math.max(0, teamStandings[teamB].losses - 1);
+    }
+    // Remove game events from season events
+    if (game.events && game.events.length > 0) {
+        const gameEventIds = new Set(game.events.map(e => e.ts));
+        seasonEvents = seasonEvents.filter(e => !gameEventIds.has(e.ts));
+    }
+}
+
+function refreshAllViews() {
+    saveSeasonData();
+    renderAdminHistory();
+    renderSeasonStats();
+    renderPerGameStats();
+    renderLeaderboard();
+    renderUpcomingGames();
+    renderFullSchedule();
+    renderAdminSchedule();
+}
+
+// DELETE: remove game, stats, schedule entry — everything gone
 function deleteGameHistory(gameIdx) {
     const game = gameHistory[gameIdx];
     if (!game) return;
     
     const gameTitle = `${game.teamA.name} vs ${game.teamB.name}`;
-    showModal(`Delete game record: ${gameTitle}?\n\nThis will remove all stats from this game.`, () => {
-        const deletedGame = {...game, stats: {...game.stats}};
+    showModal(`Delete "${gameTitle}" completely?\n\nThis removes the game, all stats, and the schedule entry. This cannot be undone.`, () => {
+        // Subtract stats
+        subtractGameStats(game);
         
-        // Remove stats from season totals
-        for (const key in game.stats) {
-            const gs = game.stats[key];
-            if (seasonStats[key]) {
-                const ss = seasonStats[key];
-                ss.games--;
-                ss.pass = Math.max(0, (ss.pass || 0) - (gs.pass || 0));
-                ss.score = Math.max(0, ss.score - gs.score);
-                ss.assist = Math.max(0, ss.assist - gs.assist);
-                ss.second_assist = Math.max(0, ss.second_assist - gs.second_assist);
-                ss.defence = Math.max(0, ss.defence - gs.defence);
-                ss.drop = Math.max(0, ss.drop - gs.drop);
-                ss.throwaway = Math.max(0, ss.throwaway - gs.throwaway);
-                if (game.winner && gs.team === game.winner) ss.wins = Math.max(0, ss.wins - 1);
-                // Remove player if no games left
-                if (ss.games <= 0) delete seasonStats[key];
+        // Save schedule entry before removing for undo
+        let removedScheduleEntry = null;
+        if (game.scheduleInfo && game.scheduleInfo.id) {
+            removedScheduleEntry = schedule.find(g => g.id === game.scheduleInfo.id);
+            if (removedScheduleEntry) {
+                removedScheduleEntry = {...removedScheduleEntry}; // clone before removing
             }
-        }
-        
-        // Update standings
-        const teamA = game.teamA.name;
-        const teamB = game.teamB.name;
-        const scoreA = game.teamA.score;
-        const scoreB = game.teamB.score;
-        if (teamStandings[teamA]) {
-            teamStandings[teamA].pf = Math.max(0, teamStandings[teamA].pf - scoreA);
-            teamStandings[teamA].pa = Math.max(0, teamStandings[teamA].pa - scoreB);
-            if (scoreA > scoreB) teamStandings[teamA].wins = Math.max(0, teamStandings[teamA].wins - 1);
-            else if (scoreB > scoreA) teamStandings[teamA].losses = Math.max(0, teamStandings[teamA].losses - 1);
-        }
-        if (teamStandings[teamB]) {
-            teamStandings[teamB].pf = Math.max(0, teamStandings[teamB].pf - scoreB);
-            teamStandings[teamB].pa = Math.max(0, teamStandings[teamB].pa - scoreA);
-            if (scoreB > scoreA) teamStandings[teamB].wins = Math.max(0, teamStandings[teamB].wins - 1);
-            else if (scoreA > scoreB) teamStandings[teamB].losses = Math.max(0, teamStandings[teamB].losses - 1);
+            schedule = schedule.filter(g => g.id !== game.scheduleInfo.id);
         }
         
         // Remove from history
         gameHistory.splice(gameIdx, 1);
         
-        saveSeasonData();
-        renderSeasonStats();
-        renderPerGameStats();
-        
-        // Add to undo stack
+        refreshAllViews();
         showUndoToast(`Game "${gameTitle}" deleted`, {
             type: 'gameHistory',
-            game: deletedGame,
+            action: 'delete',
+            game: game,
+            index: gameIdx,
+            scheduleEntry: removedScheduleEntry
+        });
+    });
+}
+
+// RESET via schedule ID: lookup history entry, then delegate to resetGameHistory
+function resetGameByScheduleId(scheduleId) {
+    const gameIdx = gameHistory.findIndex(g => g.scheduleInfo && g.scheduleInfo.id === scheduleId);
+    if (gameIdx >= 0) {
+        resetGameHistory(gameIdx);
+    }
+}
+
+// RESET: keep game on schedule so it can be replayed, but wipe stats
+function resetGameHistory(gameIdx) {
+    const game = gameHistory[gameIdx];
+    if (!game) return;
+    
+    const gameTitle = `${game.teamA.name} vs ${game.teamB.name}`;
+    showModal(`Reset "${gameTitle}"?\n\nThis will remove all stats from this game and put it back on the schedule so you can replay it.`, () => {
+        // Subtract stats
+        subtractGameStats(game);
+        
+        // Reset the scheduled game so it reappears as upcoming
+        if (game.scheduleInfo && game.scheduleInfo.id) {
+            const scheduledGame = schedule.find(g => g.id === game.scheduleInfo.id);
+            if (scheduledGame) {
+                delete scheduledGame.status;
+                delete scheduledGame.result;
+            }
+        }
+        
+        // Remove from history
+        gameHistory.splice(gameIdx, 1);
+        
+        refreshAllViews();
+        showUndoToast(`Game "${gameTitle}" reset — ready to replay`, {
+            type: 'gameHistory',
+            action: 'reset',
+            game: game,
             index: gameIdx
         });
     });
