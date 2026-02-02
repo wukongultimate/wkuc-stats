@@ -112,6 +112,12 @@
         .stats-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
         .stats-table th, .stats-table td { padding: 10px 6px; text-align: center; border-bottom: 1px solid #222; }
         .stats-table th { background: #111; color: #888; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.3px; position: sticky; top: 0; }
+        .stats-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+        .stats-table th.sortable:hover { color: #fff; }
+        .stats-table th.sortable.sort-active { color: #4ade80; }
+        .stats-table th.sortable .sort-arrow { font-size: 0.6rem; margin-left: 2px; }
+        .stats-table th.sortable.sort-active.sort-desc .sort-arrow::after { content: '▼'; }
+        .stats-table th.sortable.sort-active.sort-asc .sort-arrow::after { content: '▲'; }
         .stats-table td { color: #ccc; }
         .stats-table td:first-child, .stats-table th:first-child { text-align: left; color: #fff; }
         
@@ -390,6 +396,22 @@
             border: 1px solid #333; min-width: auto;
         }
         
+        /* Floating game controls bar (undo + exit + end) */
+        .floating-game-bar {
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 900;
+            display: none; /* shown via JS when live game is active */
+            background: #111; border-top: 1px solid #333;
+            padding: 10px 12px; padding-bottom: max(10px, env(safe-area-inset-bottom));
+            gap: 10px;
+            align-items: center;
+            justify-content: center;
+        }
+        .floating-game-bar.visible { display: flex; }
+        .floating-game-bar .btn { flex: 1; min-width: 0; padding: 14px 8px; font-size: 0.9rem; text-align: center; }
+        .floating-game-bar .btn.undo-float { background: #222; color: #fff; border: 1px solid #555; font-size: 1rem; flex: 1.2; }
+        /* Add bottom padding to live-game so content isn't hidden behind floating bar */
+        #live-game { padding-bottom: 80px; }
+
         /* Undo Toast */
         .undo-toast {
             position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -827,12 +849,6 @@
             <h3 class="section-title">Event Log</h3>
             <div class="event-log" id="event-log"><div class="empty-state">No events yet</div></div>
 
-            <div class="actions-row">
-                <button class="btn secondary" onclick="undoLast()">↩ Undo</button>
-                <button class="btn secondary" onclick="showExitGameModal()" style="background:transparent; border:1px solid #555; color:#aaa;">✕ Exit</button>
-                <button class="btn danger" onclick="confirmEndGame()">End Game</button>
-            </div>
-
             <div id="game-end-downloads" class="hidden" style="margin-top:20px; padding:20px; background:#111; border:1px solid #222; border-radius:8px; text-align:center;">
                 <p style="margin-bottom:16px; color:#4ade80; font-weight:600;">✓ Game saved!</p>
                 <div class="actions-row" style="margin:0;">
@@ -894,7 +910,20 @@
             <h3 class="section-title">Player Stats</h3>
             <div class="stats-container">
                 <table class="stats-table" id="season-stats-table">
-                    <thead><tr><th>Player</th><th>Team</th><th>GP</th><th>Ps</th><th>Sc</th><th>As</th><th>2nd</th><th>Def</th><th>Dr</th><th>TA</th><th>W</th><th>Pts</th></tr></thead>
+                    <thead><tr>
+                        <th class="sortable" onclick="sortSeasonStats('player')">Player<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('team')">Team<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('games')">GP<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('pass')">Ps<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('score')">Sc<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('assist')">As<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('second_assist')">2nd<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('defence')">Def<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('drop')">Dr<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('throwaway')">TA<span class="sort-arrow"></span></th>
+                        <th class="sortable" onclick="sortSeasonStats('wins')">W<span class="sort-arrow"></span></th>
+                        <th class="sortable sort-active sort-desc" onclick="sortSeasonStats('points')">Pts<span class="sort-arrow"></span></th>
+                    </tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -1333,6 +1362,13 @@ Week 2	FEB 8	8:00–8:55 PM	Team Nicole VS Team Luke"></textarea>
         <div class="welcome-message" id="welcome-message">🥏 Let's fly!</div>
     </div>
 
+    <!-- Floating Game Controls Bar -->
+    <div class="floating-game-bar" id="floating-game-bar">
+        <button class="btn undo-float" onclick="undoLast()">↩ Undo</button>
+        <button class="btn secondary" onclick="showExitGameModal()" style="background:transparent; border:1px solid #555; color:#aaa;">✕ Exit</button>
+        <button class="btn danger" onclick="confirmEndGame()">End Game</button>
+    </div>
+
     <!-- Undo Toast -->
     <div class="undo-toast hidden" id="undo-toast">
         <span id="undo-message">Item deleted</span>
@@ -1615,6 +1651,8 @@ function rebuildSeasonStatsFromHistory() {
         const winner = game.winner;
         if (game.stats) {
             for (const key in game.stats) {
+                const playerName = getPlayerFromKey(key);
+                if (playerName === 'Sub') continue; // Skip substitute placeholder
                 const gs = game.stats[key];
                 if (!seasonStats[key]) {
                     const playerName = getPlayerFromKey(key);
@@ -2013,6 +2051,16 @@ function filterPlayers(query) {
     });
 }
 
+// Helper: get gender icon for a player name
+function getGenderIcon(playerName) {
+    for (const id in playerBase) {
+        if (playerBase[id].name.toLowerCase() === playerName.toLowerCase()) {
+            return playerBase[id].gender === 'Female' ? '👩' : '👨';
+        }
+    }
+    return '👨';
+}
+
 // ============================================
 // LEADERBOARD
 // ============================================
@@ -2031,11 +2079,11 @@ function renderLeaderboard() {
     
     const currentPlayers = leaderboardGender === 'Open' ? openPlayers : femalePlayers;
     
-    // Get top 3 for each category
-    const pointsLeaders = [...currentPlayers].sort((a, b) => b.goals - a.goals).slice(0, 3);
-    const assistsLeaders = [...currentPlayers].sort((a, b) => b.assists - a.assists).slice(0, 3);
-    const defenseLeaders = [...currentPlayers].sort((a, b) => b.defense - a.defense).slice(0, 3);
-    const mvpLeaders = [...currentPlayers].sort((a, b) => b.total - a.total).slice(0, 3);
+    // Get leaders for each category — only include players with > 0, no cap
+    const pointsLeaders = [...currentPlayers].filter(p => p.goals > 0).sort((a, b) => b.goals - a.goals);
+    const assistsLeaders = [...currentPlayers].filter(p => p.assists > 0).sort((a, b) => b.assists - a.assists);
+    const defenseLeaders = [...currentPlayers].filter(p => p.defense > 0).sort((a, b) => b.defense - a.defense);
+    const mvpLeaders = [...currentPlayers].filter(p => p.points > 0).sort((a, b) => b.points - a.points);
     
     container.innerHTML = `
         <!-- Gender Toggle -->
@@ -2079,13 +2127,13 @@ function renderLeaderboard() {
             </div>
         </div>
         
-        <!-- MVP (Total Score) -->
+        <!-- MVP (Weighted Total Points) -->
         <div class="leaderboard-card">
             <div class="leaderboard-card-header">
                 <span class="icon">🏆</span> MVP (Total Points)
             </div>
             <div class="leaderboard-podium">
-                ${renderPodium(mvpLeaders, 'total')}
+                ${renderPodium(mvpLeaders, 'points')}
             </div>
         </div>
         `}
@@ -2095,14 +2143,23 @@ function renderLeaderboard() {
 function renderPodium(players, stat) {
     if (players.length === 0) return '<div style="color:#666; font-size:0.8rem; padding:10px;">No data yet</div>';
     
-    const ranks = ['gold', 'silver', 'bronze'];
-    return players.map((p, i) => `
+    const rankColors = ['gold', 'silver', 'bronze'];
+    let currentRank = 1;
+    let html = '';
+    for (let i = 0; i < players.length; i++) {
+        if (i > 0 && players[i][stat] < players[i - 1][stat]) {
+            currentRank = i + 1;
+        }
+        if (currentRank > 3) break; // Stop after rank 3 (ties at 3 still included)
+        const colorClass = rankColors[currentRank - 1];
+        html += `
         <div class="podium-item" style="cursor:default;">
-            <div class="podium-rank ${ranks[i]}">${i + 1}</div>
-            <div class="podium-name">${escHtml(p.name)}</div>
-            <div class="podium-value">${p[stat]}</div>
-        </div>
-    `).join('');
+            <div class="podium-rank ${colorClass}">${currentRank}</div>
+            <div class="podium-name">${escHtml(players[i].name)}</div>
+            <div class="podium-value">${players[i][stat]}</div>
+        </div>`;
+    }
+    return html;
 }
 
 function switchLeaderboardGender(gender) {
@@ -2156,6 +2213,7 @@ function getPlayerStatsWithGender() {
         const s = seasonStats[key];
         // Always extract player name from key — s.player can be corrupted after Firebase round-trips
         const playerName = getPlayerFromKey(key);
+        if (playerName === 'Sub') continue; // Skip substitute placeholder
         
         if (!playerMap[playerName]) {
             // Find gender from playerBase
@@ -2166,7 +2224,7 @@ function getPlayerStatsWithGender() {
                     break;
                 }
             }
-            playerMap[playerName] = { name: playerName, gender, goals: 0, assists: 0, defense: 0, total: 0, games: 0 };
+            playerMap[playerName] = { name: playerName, gender, goals: 0, assists: 0, defense: 0, games: 0, score: 0, assist: 0, second_assist: 0, defence: 0, drop: 0, throwaway: 0, wins: 0, points: 0 };
         }
         
         const p = playerMap[playerName];
@@ -2175,7 +2233,19 @@ function getPlayerStatsWithGender() {
         p.assists += rs.assists;
         p.defense += rs.defense;
         p.games += rs.games;
-        p.total = p.goals + p.assists + p.defense;
+        // Accumulate raw stats for calcPoints
+        p.score += rs.goals;
+        p.assist += rs.assists;
+        p.second_assist += rs.second_assist;
+        p.defence += rs.defense;
+        p.drop += rs.drop;
+        p.throwaway += rs.throwaway;
+        p.wins += rs.wins;
+    }
+    
+    // Calculate weighted points for each player
+    for (const name in playerMap) {
+        playerMap[name].points = calcPoints(playerMap[name]);
     }
     
     return Object.values(playerMap);
@@ -2259,6 +2329,7 @@ function showPlayerDetailByName(playerName) {
             // Check if player was MVP (top scorer in game)
             let topScorer = '', topScore = 0;
             for (const key in gameStats) {
+                if (getPlayerFromKey(key) === 'Sub') continue;
                 const rg = readGameStat(gameStats[key]);
                 const total = rg.goals + rg.assists + rg.defense;
                 if (total > topScore) {
@@ -2409,6 +2480,7 @@ function calculateRankPoints(playerName) {
             // Calculate game averages and player's stats
             // Weight: goals=1, assists=1, defense=1, 2nd assists=0.75, passes=0.25
             for (const key in gameStats) {
+                if (getPlayerFromKey(key) === 'Sub') continue;
                 const rg = readGameStat(gameStats[key]);
                 const positive = rg.goals + rg.assists + rg.defense + rg.second_assist * 0.75 + rg.pass * 0.25;
                 const negative = rg.drop + rg.throwaway;
@@ -2858,6 +2930,7 @@ function getPlayerCumulativeStats(playerName) {
             const gameStats = game.stats || {};
             let topScorer = '', topScore = 0;
             for (const key in gameStats) {
+                if (getPlayerFromKey(key) === 'Sub') continue;
                 const rg = readGameStat(gameStats[key]);
                 const goals = rg.goals;
                 const assists = rg.assists;
@@ -4237,6 +4310,7 @@ function startGame() {
     document.getElementById('game-setup').classList.add('hidden');
     document.getElementById('game-not-started').classList.add('hidden');
     document.getElementById('live-game').classList.remove('hidden');
+    document.getElementById('floating-game-bar').classList.add('visible');
     document.getElementById('team-a-name').textContent = teamAName;
     document.getElementById('team-b-name').textContent = teamBName;
     renderGameState();
@@ -4400,6 +4474,7 @@ function recordDefence(player) {
 }
 
 function addStat(player, team, stat) {
+    if (player === 'Sub') return; // Subs keep the game going but don't get stats
     const key = `${player}|${team}`;
     if (!currentGame.stats[key]) {
         currentGame.stats[key] = { player, team, pass: 0, score: 0, assist: 0, second_assist: 0, defence: 0, drop: 0, throwaway: 0 };
@@ -4604,6 +4679,7 @@ function endGame() {
     lastGameData = { stats: currentGame.stats, events: currentGame.events };
     // Hide game controls immediately
     document.querySelectorAll('.action-buttons, .team-sections-wrapper, .chain-display').forEach(el => el.classList.add('hidden'));
+    document.getElementById('floating-game-bar').classList.remove('visible');
     // Show brief "Game saved!" confirmation
     document.getElementById('game-end-downloads').classList.remove('hidden');
     // Update all stats views
@@ -4626,7 +4702,7 @@ function downloadGameStatsCSV() {
     if (!lastGameData) return;
     const date = new Date().toISOString().slice(0, 10);
     const h = ['Player', 'Team', 'Score', 'Assist', '2nd Assist', 'Defence', 'Drop', 'Throw Away', 'Points'];
-    const r = Object.values(lastGameData.stats).map(s => [s.player, s.team, s.score, s.assist, s.second_assist, s.defence, s.drop, s.throwaway, calcPoints(s, false)]);
+    const r = Object.values(lastGameData.stats).filter(s => s.player !== 'Sub').map(s => [s.player, s.team, s.score, s.assist, s.second_assist, s.defence, s.drop, s.throwaway, calcPoints(s, false)]);
     downloadCSV(`game-stats-${date}.csv`, h, r);
 }
 
@@ -4664,6 +4740,7 @@ function resetGameUI() {
     document.getElementById('game-setup').classList.add('hidden');
     document.getElementById('game-not-started').classList.remove('hidden');
     document.getElementById('live-game').classList.add('hidden');
+    document.getElementById('floating-game-bar').classList.remove('visible');
     document.getElementById('selected-game-info').classList.add('hidden');
     document.getElementById('poss-a').classList.remove('selected');
     document.getElementById('poss-b').classList.remove('selected');
@@ -4674,6 +4751,38 @@ function resetGameUI() {
     renderUpcomingGames();
 }
 
+// Season stats sorting state
+let seasonSortCol = 'points';
+let seasonSortDir = 'desc'; // 'asc' or 'desc'
+
+function sortSeasonStats(col) {
+    if (seasonSortCol === col) {
+        seasonSortDir = seasonSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        seasonSortCol = col;
+        seasonSortDir = (col === 'player' || col === 'team') ? 'asc' : 'desc';
+    }
+    renderSeasonStats();
+}
+
+function getSeasonSortValue(s, col) {
+    switch (col) {
+        case 'player': return s.player.toLowerCase();
+        case 'team': return s.team.toLowerCase();
+        case 'games': return s.games || 0;
+        case 'pass': return s.pass || 0;
+        case 'score': return s.score || 0;
+        case 'assist': return s.assist || 0;
+        case 'second_assist': return s.second_assist || 0;
+        case 'defence': return s.defence || 0;
+        case 'drop': return s.drop || 0;
+        case 'throwaway': return s.throwaway || 0;
+        case 'wins': return s.wins || 0;
+        case 'points': return calcPoints(s);
+        default: return 0;
+    }
+}
+
 // Season
 function renderSeasonStats() {
     // Standings
@@ -4681,11 +4790,31 @@ function renderSeasonStats() {
     const st = Object.entries(teamStandings).sort((a, b) => b[1].wins - a[1].wins || (b[1].pf - b[1].pa) - (a[1].pf - a[1].pa));
     stBody.innerHTML = st.length === 0 ? '<tr><td colspan="5" class="empty-state">No games yet</td></tr>' :
         st.map(([n, s]) => `<tr><td>${escHtml(n)}</td><td>${s.wins}</td><td>${s.losses}</td><td>${s.pf}</td><td>${s.pa}</td></tr>`).join('');
-    // Players - now with pass stat
+    // Players - with gender icon and sortable
     const pBody = document.querySelector('#season-stats-table tbody');
-    const players = Object.values(seasonStats).sort((a, b) => calcPoints(b) - calcPoints(a));
+    const players = Object.values(seasonStats).filter(s => s.player !== 'Sub');
+    
+    // Sort
+    players.sort((a, b) => {
+        const aVal = getSeasonSortValue(a, seasonSortCol);
+        const bVal = getSeasonSortValue(b, seasonSortCol);
+        const isStr = typeof aVal === 'string';
+        let cmp = isStr ? aVal.localeCompare(bVal) : aVal - bVal;
+        return seasonSortDir === 'asc' ? cmp : -cmp;
+    });
+    
+    // Update header active state
+    const table = document.getElementById('season-stats-table');
+    const cols = ['player','team','games','pass','score','assist','second_assist','defence','drop','throwaway','wins','points'];
+    table.querySelectorAll('thead th.sortable').forEach((th, i) => {
+        th.classList.remove('sort-active', 'sort-asc', 'sort-desc');
+        if (cols[i] === seasonSortCol) {
+            th.classList.add('sort-active', 'sort-' + seasonSortDir);
+        }
+    });
+    
     pBody.innerHTML = players.length === 0 ? '<tr><td colspan="12" class="empty-state">No stats yet</td></tr>' :
-        players.map(s => `<tr><td>${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.games}</td><td>${s.pass || 0}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td>${s.wins}</td><td><b>${calcPoints(s)}</b></td></tr>`).join('');
+        players.map(s => `<tr><td>${getGenderIcon(s.player)} ${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.games}</td><td>${s.pass || 0}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td>${s.wins}</td><td><b>${calcPoints(s)}</b></td></tr>`).join('');
 }
 
 function renderGameHistory() {
@@ -4720,8 +4849,8 @@ function renderGameHistory() {
                     <table class="stats-table">
                         <thead><tr><th>Player</th><th>Team</th><th>Sc</th><th>As</th><th>2nd</th><th>Def</th><th>Dr</th><th>TA</th><th>Pts</th></tr></thead>
                         <tbody>
-                            ${Object.values(game.stats).sort((a,b) => calcPoints(b,false) - calcPoints(a,false)).map(s => 
-                                `<tr><td>${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td><b>${calcPoints(s,false)}</b></td></tr>`
+                            ${Object.values(game.stats).filter(s => s.player !== 'Sub').sort((a,b) => calcPoints(b,false) - calcPoints(a,false)).map(s => 
+                                `<tr><td>${getGenderIcon(s.player)} ${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td><b>${calcPoints(s,false)}</b></td></tr>`
                             ).join('')}
                         </tbody>
                     </table>
@@ -4744,7 +4873,7 @@ function downloadHistoryGameCSV(idx) {
     const game = gameHistory[idx];
     const date = new Date(game.date).toISOString().slice(0, 10);
     const h = ['Player', 'Team', 'Score', 'Assist', '2nd Assist', 'Defence', 'Drop', 'Throw Away', 'Points'];
-    const r = Object.values(game.stats).map(s => [s.player, s.team, s.score, s.assist, s.second_assist, s.defence, s.drop, s.throwaway, calcPoints(s, false)]);
+    const r = Object.values(game.stats).filter(s => s.player !== 'Sub').map(s => [s.player, s.team, s.score, s.assist, s.second_assist, s.defence, s.drop, s.throwaway, calcPoints(s, false)]);
     downloadCSV(`game-${idx + 1}-stats-${date}.csv`, h, r);
 }
 
@@ -4758,7 +4887,7 @@ function downloadHistoryEventsCSV(idx) {
 
 function downloadSeasonPlayerCSV() {
     const h = ['Player', 'Team', 'Games', 'Score', 'Assist', '2nd Assist', 'Defence', 'Drop', 'Throw Away', 'Wins', 'Points'];
-    const r = Object.values(seasonStats).map(s => [s.player, s.team, s.games, s.score, s.assist, s.second_assist, s.defence, s.drop, s.throwaway, s.wins, calcPoints(s)]);
+    const r = Object.values(seasonStats).filter(s => s.player !== 'Sub').map(s => [s.player, s.team, s.games, s.score, s.assist, s.second_assist, s.defence, s.drop, s.throwaway, s.wins, calcPoints(s)]);
     downloadCSV('season-player-stats.csv', h, r);
 }
 
@@ -5290,6 +5419,78 @@ function deleteSeason(seasonId) {
 }
 
 // Per-game stats view (Stats tab)
+// Per-game sort state: { [gameIdx]: { col, dir } }
+let perGameSort = {};
+
+function sortPerGameStats(gameIdx, col) {
+    if (!perGameSort[gameIdx]) perGameSort[gameIdx] = { col: 'points', dir: 'desc' };
+    const s = perGameSort[gameIdx];
+    if (s.col === col) {
+        s.dir = s.dir === 'desc' ? 'asc' : 'desc';
+    } else {
+        s.col = col;
+        s.dir = (col === 'player' || col === 'team') ? 'asc' : 'desc';
+    }
+    renderPerGameTable(gameIdx);
+}
+
+function getPerGameSortValue(s, col) {
+    switch (col) {
+        case 'player': return s.player.toLowerCase();
+        case 'team': return s.team.toLowerCase();
+        case 'pass': return s.pass || 0;
+        case 'score': return s.score || 0;
+        case 'assist': return s.assist || 0;
+        case 'second_assist': return s.second_assist || 0;
+        case 'defence': return s.defence || 0;
+        case 'drop': return s.drop || 0;
+        case 'throwaway': return s.throwaway || 0;
+        case 'wins': return s.wins || 0;
+        case 'points': return calcPoints(s);
+        default: return 0;
+    }
+}
+
+// Enrich per-game player stats with a wins field (1 if player's team won, 0 otherwise)
+function enrichGameStatsWithWins(game) {
+    const winner = game.winner;
+    return Object.values(game.stats).filter(s => s.player !== 'Sub').map(s => {
+        const won = winner && s.team === winner ? 1 : 0;
+        return { ...s, wins: won };
+    });
+}
+
+function renderPerGameTable(gameIdx) {
+    const game = gameHistory[gameIdx];
+    if (!game) return;
+    const tbody = document.querySelector(`#per-game-${gameIdx} .stats-table tbody`);
+    if (!tbody) return;
+    const sort = perGameSort[gameIdx] || { col: 'points', dir: 'desc' };
+    
+    const rows = enrichGameStatsWithWins(game);
+    rows.sort((a, b) => {
+        const aVal = getPerGameSortValue(a, sort.col);
+        const bVal = getPerGameSortValue(b, sort.col);
+        const isStr = typeof aVal === 'string';
+        let cmp = isStr ? aVal.localeCompare(bVal) : aVal - bVal;
+        return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    
+    tbody.innerHTML = rows.map(s => 
+        `<tr><td>${getGenderIcon(s.player)} ${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.pass || 0}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td>${s.wins}</td><td><b>${calcPoints(s)}</b></td></tr>`
+    ).join('');
+    
+    // Update header active state
+    const table = document.querySelector(`#per-game-${gameIdx} .stats-table`);
+    const cols = ['player','team','pass','score','assist','second_assist','defence','drop','throwaway','wins','points'];
+    table.querySelectorAll('thead th.sortable').forEach((th, i) => {
+        th.classList.remove('sort-active', 'sort-asc', 'sort-desc');
+        if (cols[i] === sort.col) {
+            th.classList.add('sort-active', 'sort-' + sort.dir);
+        }
+    });
+}
+
 function renderPerGameStats() {
     const container = document.getElementById('per-game-stats-list');
     if (!container) return;
@@ -5314,14 +5515,11 @@ function renderPerGameStats() {
         if (si?.date) {
             gameDate = formatDate(si.date);
         } else if (weekLabel) {
-            // If we have week info but no date, the date is embedded in the week (e.g., "Week 1 FEB 1")
-            // Try to extract and format it
             const dateMatch = weekLabel.match(/([A-Z]{3})\s+(\d{1,2})/i);
             if (dateMatch) {
                 gameDate = dateMatch[1] + ' ' + dateMatch[2];
             }
         }
-        // Only fallback to recording date if we have no schedule info at all
         if (!gameDate && !weekLabel && !timeLabel) {
             gameDate = formatDate(game.date);
         }
@@ -5329,12 +5527,13 @@ function renderPerGameStats() {
         const gameTitle = `${game.teamA.name} vs ${game.teamB.name}`;
         const resultText = `${game.teamA.score} - ${game.teamB.score}`;
         
-        // Build date/time display string
         let dateTimeStr = '';
         if (gameDate) dateTimeStr = gameDate;
         if (timeLabel) dateTimeStr += (dateTimeStr ? ' • ' : '') + timeLabel;
         if (gameLabel) dateTimeStr += (dateTimeStr ? ' • ' : '') + gameLabel;
-        if (!dateTimeStr) dateTimeStr = formatDate(game.date); // Last resort fallback
+        if (!dateTimeStr) dateTimeStr = formatDate(game.date);
+        
+        const rows = enrichGameStatsWithWins(game).sort((a,b) => calcPoints(b) - calcPoints(a));
         
         return `
         <div class="game-stats-card">
@@ -5354,10 +5553,22 @@ function renderPerGameStats() {
             <div class="game-stats-body" id="per-game-${gameIdx}">
                 <div class="stats-container">
                     <table class="stats-table">
-                        <thead><tr><th>Player</th><th>Team</th><th>Ps</th><th>Sc</th><th>As</th><th>2nd</th><th>Def</th><th>Dr</th><th>TA</th><th>Pts</th></tr></thead>
+                        <thead><tr>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'player')">Player<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'team')">Team<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'pass')">Ps<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'score')">Sc<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'assist')">As<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'second_assist')">2nd<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'defence')">Def<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'drop')">Dr<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'throwaway')">TA<span class="sort-arrow"></span></th>
+                            <th class="sortable" onclick="sortPerGameStats(${gameIdx},'wins')">W<span class="sort-arrow"></span></th>
+                            <th class="sortable sort-active sort-desc" onclick="sortPerGameStats(${gameIdx},'points')">Pts<span class="sort-arrow"></span></th>
+                        </tr></thead>
                         <tbody>
-                            ${Object.values(game.stats).sort((a,b) => calcPoints(b,false) - calcPoints(a,false)).map(s => 
-                                `<tr><td>${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.pass || 0}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td><b>${calcPoints(s,false)}</b></td></tr>`
+                            ${rows.map(s => 
+                                `<tr><td>${getGenderIcon(s.player)} ${escHtml(s.player)}</td><td>${escHtml(s.team)}</td><td>${s.pass || 0}</td><td>${s.score}</td><td>${s.assist}</td><td>${s.second_assist}</td><td>${s.defence}</td><td>${s.drop}</td><td>${s.throwaway}</td><td>${s.wins}</td><td><b>${calcPoints(s)}</b></td></tr>`
                             ).join('')}
                         </tbody>
                     </table>
