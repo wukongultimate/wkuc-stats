@@ -901,7 +901,17 @@ style="width:100%; padding:12px; background:#0a0a0a; border:1px solid #333; bord
 </div>
 <script>
 const POINTS = { score: 500, assist: 500, second_assist: 250, defence: 500, drop: -500, throwaway: -250, win: 500 };
-const ADMIN_PASSWORD = "wukong2024";
+// Password is stored as SHA-256 hash — never in plain text
+// To change your password, run in browser console:
+//   crypto.subtle.digest('SHA-256', new TextEncoder().encode('YOUR_NEW_PASSWORD'))
+//     .then(b => console.log(Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('')))
+const ADMIN_PASSWORD_HASH = "bc703f237e645445343438a60591be6b49b3795bbb6fb752cd803894de37a589";
+async function hashPassword(password) {
+const encoder = new TextEncoder();
+const data = encoder.encode(password);
+const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
 const urlParams = new URLSearchParams(window.location.search);
 const isPlayerViewURL = urlParams.get('view') === 'player';
 let isPlayerView = false;
@@ -963,9 +973,10 @@ function showAdminLogin() {
 document.getElementById('admin-login').classList.remove('hidden');
 document.getElementById('admin-password').focus();
 }
-function checkAdminPassword() {
+async function checkAdminPassword() {
 const input = document.getElementById('admin-password');
-if (input.value === ADMIN_PASSWORD) {
+const hash = await hashPassword(input.value);
+if (hash === ADMIN_PASSWORD_HASH) {
 isPlayerView = false;
 isLoggedIn = true;
 document.getElementById('role-modal').classList.remove('show');
